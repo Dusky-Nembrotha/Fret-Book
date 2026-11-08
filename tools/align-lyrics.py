@@ -153,11 +153,9 @@ def build_sheet(song, gp2fb, raw, mapping, lines, note=''):
     """Lyrics, each preceded by the chords of the bars it is sung over."""
     tracks = gp2fb.guitar_tracks(song)
     nbars = min(len(t.measures) for t in tracks)
-    chords = {}
-    for i in range(nbars):
-        pitches, low = gp2fb.bar_pitches(tracks, i)
-        if pitches:
-            chords[i + 1] = gp2fb.name_chord(set(pitches), low)
+    lead = gp2fb.rhythm_track(tracks)
+    by_bar = gp2fb.chords_by_bar(lead)
+    chords = {b: v[0] for b, v in by_bar.items() if v}
 
     starts = [mapping.get(i) for i in range(len(lines))]
     out = []
@@ -318,11 +316,9 @@ def by_sections(song, gp2fb, raw, note=''):
     if not marks:
         return None
 
-    chords = {}
-    for i in range(nbars):
-        pitches, low = gp2fb.bar_pitches(tracks, i)
-        if pitches:
-            chords[i + 1] = gp2fb.name_chord(set(pitches), low)
+    lead = gp2fb.rhythm_track(tracks)
+    by_bar = gp2fb.chords_by_bar(lead)
+    chords = {b: v[0] for b, v in by_bar.items() if v}
 
     def chord_rows(bar):
         nxt = min([b for b, _ in marks if b > bar] + [nbars + 1])

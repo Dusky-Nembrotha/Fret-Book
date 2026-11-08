@@ -28,22 +28,30 @@ NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
 
 # interval set -> Fretbook quality suffix. Richer shapes are preferred, so a
 # four-note set is named as a 7th rather than as the triad hiding inside it.
-SHAPES = [
-    (frozenset({0, 4, 7, 11}), 'maj7'),
-    (frozenset({0, 3, 7, 10}), 'm7'),
-    (frozenset({0, 4, 7, 10}), '7'),
-    (frozenset({0, 3, 6, 10}), 'm7b5'),
-    (frozenset({0, 3, 6, 9}), 'dim7'),
-    (frozenset({0, 4, 7, 9}), '6'),
-    (frozenset({0, 2, 7}), 'sus2'),
-    (frozenset({0, 5, 7}), 'sus4'),
-    (frozenset({0, 4, 7}), ''),
-    (frozenset({0, 3, 7}), 'm'),
-    (frozenset({0, 3, 6}), 'dim'),
-    (frozenset({0, 4, 8}), 'aug'),
-    (frozenset({0, 7}), '5'),
-    (frozenset({0, 5}), '5'),
-]
+# Intervals above the LOWEST sounding note. In riff-based music the bottom
+# note is the root; searching every rotation for the "fullest" chord invents
+# names like C#maj7 for what is plainly an Ab power chord.
+STACKS = {
+    (0, 7): '5',
+    (0, 3, 7): 'm',
+    (0, 4, 7): '',
+    (0, 3, 6): 'dim',
+    (0, 4, 8): 'aug',
+    (0, 2, 7): 'sus2',
+    (0, 5, 7): 'sus4',
+    (0, 5, 10): '7sus4',
+    (0, 7, 10): '7sus4',
+    (0, 3, 7, 10): 'm7',
+    (0, 4, 7, 10): '7',
+    (0, 4, 7, 11): 'maj7',
+    (0, 3, 7, 11): 'mMaj7',
+    (0, 3, 6, 10): 'm7b5',
+    (0, 3, 6, 9): 'dim7',
+    (0, 4, 7, 9): '6',
+    (0, 3, 7, 9): 'm6',
+    (0, 2, 4, 7): 'add9',
+    (0, 4, 7, 14 % 12): 'add9',
+}
 
 PER_LINE = 4          # bars per line in the finished chart
 # Tracks that are not rhythm guitar. A vocal line in particular will wreck the
@@ -66,23 +74,21 @@ def guitar_tracks(song):
     return out or [t for t in song.tracks if not t.isPercussionTrack]
 
 
-def name_chord(pitches, bass):
-    """Name the chord formed by a set of MIDI pitches."""
-    if not pitches:
+def name_stack(pitches):
+    """Name one simultaneous stack of notes, rooted on its lowest."""
+    if len(pitches) < 2:
         return None
-    pcs = {p % 12 for p in pitches}
-    best = None
-    for root in sorted(pcs):
-        ivals = frozenset((p - root) % 12 for p in pcs)
-        for shape, suffix in SHAPES:
-            if shape == ivals:
-                # prefer the fuller shape, then the one rooted on the bass note
-                score = (len(shape), root == bass % 12)
-                if best is None or score > best[0]:
-                    best = (score, NAMES[root] + suffix)
-    if best:
-        return best[1]
-    return NAMES[bass % 12] + '5'
+    root = min(pitches)
+    ivals = tuple(sorted({(p - root) % 12 for p in pitches}))
+    if len(ivals) < 2:
+        return None                      # octaves only
+    name = STACKS.get(ivals)
+    if name is None:
+        if 7 in ivals:                   # a power chord with extra colour
+            name = '5'
+        else:
+            return None                  # a passing shape, not a chord
+    return NAMES[root % 12] + name
 
 
 STANDARD = [64, 59, 55, 50, 45, 40]   # e B G D A E, high string first
@@ -102,26 +108,45 @@ def tuning_shift(tracks):
     return 0
 
 
-def bar_pitches(tracks, i):
-    pitches, lowest = [], None
-    for t in tracks:
-        measure = t.measures[i]
-        for voice in measure.voices:
+def rhythm_track(tracks):
+    """The guitar carrying the chords: the one playing the most stacks."""
+    def stacks(t):
+        n = 0
+        for m in t.measures:
+            for v in m.voices[:1]:
+                for b in v.beats:
+                    live = [x for x in b.notes
+                            if x.type.name not in ('rest', 'dead')]
+                    if len(live) > 1:
+                        n += 1
+        return n
+    return max(tracks, key=stacks)
+
+
+def chords_by_bar(track):
+    """{bar number: [chord names in the order they are struck]}"""
+    out = {}
+    for i, measure in enumerate(track.measures):
+        seq = []
+        for voice in measure.voices[:1]:
             for beat in voice.beats:
-                for note in beat.notes:
-                    if note.type.name in ('rest', 'dead'):
-                        continue
-                    val = t.strings[note.string - 1].value + note.value
-                    pitches.append(val)
-                    if lowest is None or val < lowest:
-                        lowest = val
-    return pitches, lowest
+                live = [track.strings[n.string - 1].value + n.value
+                        for n in beat.notes
+                        if n.type.name not in ('rest', 'dead')]
+                name = name_stack(live)
+                if name and (not seq or seq[-1] != name):
+                    seq.append(name)
+        if seq:
+            out[i + 1] = seq
+    return out
 
 
 def convert(path, every, collapse=True):
     song = guitarpro.parse(path)
     tracks = guitar_tracks(song)
-    nbars = min(len(t.measures) for t in tracks)
+    lead = rhythm_track(tracks)
+    nbars = len(lead.measures)
+    bar_chords = chords_by_bar(lead)
 
     lines, pending, current_section = [], [], None
 
@@ -147,20 +172,15 @@ def convert(path, every, collapse=True):
 
         if i % every:
             continue
-        pitches, lowest = bar_pitches(tracks, i)
-        if not pitches:
-            continue
-        chord = name_chord(set(pitches), lowest)
-        if not chord:
-            continue
-        if collapse and pending and pending[-1] == chord:
-            continue
-        pending.append(chord)
+        for chord in bar_chords.get(i + 1, []):
+            if collapse and pending and pending[-1] == chord:
+                continue
+            pending.append(chord)
     emit()
 
     while lines and not lines[0].strip():
         lines.pop(0)
-    return song, tracks, nbars, '\n'.join(lines)
+    return song, [lead], nbars, '\n'.join(lines)
 
 
 def title_from(song, path, artist=''):
