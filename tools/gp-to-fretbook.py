@@ -46,8 +46,11 @@ SHAPES = [
 ]
 
 PER_LINE = 4          # bars per line in the finished chart
+# Tracks that are not rhythm guitar. A vocal line in particular will wreck the
+# chord naming, because a single melody note gets mixed in with the harmony.
 SKIP_WORDS = ('string', 'orchestr', 'violin', 'cello', 'choir', 'koto',
-              'shot', 'canon', 'piano', 'horn', 'trumpet', 'flute')
+              'shot', 'canon', 'piano', 'horn', 'trumpet', 'flute',
+              'vocal', 'voice', 'vox', 'sing', 'lyric', 'melody')
 
 
 def guitar_tracks(song):
@@ -80,6 +83,23 @@ def name_chord(pitches, bass):
     if best:
         return best[1]
     return NAMES[bass % 12] + '5'
+
+
+STANDARD = [64, 59, 55, 50, 45, 40]   # e B G D A E, high string first
+
+
+def tuning_shift(tracks):
+    """How far the guitars are detuned, in semitones, or 0 if standard/odd."""
+    for t in tracks:
+        values = [s.value for s in t.strings]
+        if len(values) != 6:
+            continue
+        offsets = {v - s for v, s in zip(values, STANDARD)}
+        if len(offsets) == 1:
+            shift = offsets.pop()
+            if shift:
+                return shift
+    return 0
 
 
 def bar_pitches(tracks, i):
@@ -143,14 +163,25 @@ def convert(path, every, collapse=True):
     return song, tracks, nbars, '\n'.join(lines)
 
 
-def title_from(song, path):
-    """Best available song title: the score's own, else the file name."""
+def title_from(song, path, artist=''):
+    """Best available song title: the score's own, else tidied from the name."""
     for candidate in (song.title, song.subtitle):
         if candidate and candidate.strip():
             return candidate.strip()
     stem = os.path.basename(path).rsplit('.', 1)[0]
-    # strip the bracketed Chinese tags these files often carry
-    return re.sub(r'[\[【(（][^\])】）]*[\]】)）]', '', stem).strip() or stem
+    # drop bracketed tags these files often carry, e.g. "[总谱]"
+    stem = re.sub(r'[\[【(（][^\]】)）]*[\]】)）]', ' ', stem)
+    stem = stem.replace('_', ' ').replace('-', ' ')
+    # "iced earth devil to pay" -> "devil to pay"
+    for name in (artist, song.artist or ''):
+        name = (name or '').strip().lower()
+        if name and stem.lower().startswith(name):
+            stem = stem[len(name):]
+    stem = ' '.join(stem.split())
+    small = {'to', 'at', 'the', 'a', 'of', 'in', 'on', 'and', 'all'}
+    words = [w if (w.lower() in small and i) else w[:1].upper() + w[1:]
+             for i, w in enumerate(stem.split())]
+    return ' '.join(words) or os.path.basename(path)
 
 
 def main():
@@ -168,6 +199,10 @@ def main():
                     help='read a chord every N bars (default every bar)')
     ap.add_argument('--keep-repeats', action='store_true',
                     help='do not collapse a chord repeated across bars')
+    ap.add_argument('--note', default='',
+                    help='a line of plain text to put at the top of each sheet')
+    ap.add_argument('--tuning-note', action='store_true',
+                    help='add a note naming the tuning when it is not standard')
     ap.add_argument('-o', '--out', default='fretbook-import.json')
     a = ap.parse_args()
 
@@ -187,7 +222,24 @@ def main():
             failures.append('%s: no playable notes on any guitar track'
                             % os.path.basename(path))
             continue
-        title = a.song or title_from(song, path)
+        notes = []
+        if a.note:
+            notes.append(a.note)
+        if a.tuning_note:
+            shift = tuning_shift(tracks)
+            if shift:
+                notes.append(
+                    'Tuned %s a %s. The chords below are the real sounding '
+                    'notes, so tune %s and tap KEY %s once to get the shapes '
+                    'you actually play.'
+                    % ('down' if shift < 0 else 'up',
+                       'semitone' if abs(shift) == 1 else '%d semitones' % abs(shift),
+                       'down' if shift < 0 else 'up',
+                       '+' if shift < 0 else '-'))
+        if notes:
+            sheet = '\n\n'.join(notes) + '\n\n' + sheet
+
+        title = a.song or title_from(song, path, a.artist)
         entries.append({
             'id': 'gp%d%03d' % (int(time.time() * 1000), n),
             'song': title,
