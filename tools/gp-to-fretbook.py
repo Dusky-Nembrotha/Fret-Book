@@ -242,6 +242,7 @@ def main():
         title = a.song or title_from(song, path, a.artist)
         entries.append({
             'id': 'gp%d%03d' % (int(time.time() * 1000), n),
+            'added': int(time.time() * 1000),
             'song': title,
             'artist': a.artist or (song.artist or '').strip(),
             'label': 'From score',

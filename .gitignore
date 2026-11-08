@@ -6,3 +6,6 @@ fretbook-import.json
 songs.json
 scores/*
 !scores/README.md
+
+# Lyrics pasted in for a song. Not ours to publish.
+lyrics/
