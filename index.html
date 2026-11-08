@@ -1502,21 +1502,34 @@ function restoreFrom(text){
   const list=Array.isArray(data)?data:data&&Array.isArray(data.imports)?data.imports:null;
   if(!list){$('bkErr').textContent='No songs found in that backup.';return;}
   const valid=list.filter(x=>x&&typeof x.song==='string'&&typeof x.sheet==='string'&&x.song.trim());
-  const have=new Set(imports.map(x=>x.id)), sig=x=>x.song.toLowerCase()+'|'+x.sheet;
+  const sig=x=>x.song.toLowerCase()+'|'+x.sheet;
   const haveSig=new Set(imports.map(sig));
-  let added=0;
+  const byId=new Map(imports.map((x,i)=>[x.id,i]));
+  const shape=x=>({id:String(x.id||Date.now().toString(36)+Math.random().toString(36).slice(2,6)),song:x.song,artist:x.artist||'',label:x.label||'Restored',source:x.source||'',url:/^https?:\/\//.test(x.url||'')?x.url:'',sheet:x.sheet,key:x.key||lastChord(x.sheet)||'C',capo:+x.capo||0,added:(+x.added>0&&+x.added<4e12)?+x.added:Date.now(),meta:x.meta&&typeof x.meta==='object'?x.meta:{}});
+  let added=0,updated=0;
   valid.forEach(x=>{
-    if(have.has(x.id)||haveSig.has(sig(x))) return;
-    imports.push({id:String(x.id||Date.now().toString(36)+Math.random().toString(36).slice(2,6)),song:x.song,artist:x.artist||'',label:x.label||'Restored',source:x.source||'',url:/^https?:\/\//.test(x.url||'')?x.url:'',sheet:x.sheet,key:x.key||lastChord(x.sheet)||'C',capo:+x.capo||0,added:(+x.added>0&&+x.added<4e12)?+x.added:Date.now(),meta:x.meta&&typeof x.meta==='object'?x.meta:{}});
-    have.add(x.id);haveSig.add(sig(x));added++;
+    if(haveSig.has(sig(x))) return;          // same song, same sheet: nothing to do
+    const at=byId.get(String(x.id));
+    const row=shape(x);
+    if(at!=null){                             // same song, changed sheet: take the new one
+      row.added=imports[at].added||row.added;
+      imports[at]=row; updated++;
+    }else{
+      imports.push(row); byId.set(row.id,imports.length-1); added++;
+    }
+    haveSig.add(sig(x));
   });
   if(data.settings&&typeof data.settings==='object'&&!load('fretbook.settings',null)){Object.assign(settings,data.settings);saveSettings();applySkin();state.size=settings.size;}
   if(data.prefs&&typeof data.prefs==='object') Object.keys(data.prefs).forEach(k=>{if(!(k in prefs)) prefs[k]=data.prefs[k];});
   const ok=save('fretbook.imports',imports); save('fretbook.prefs',prefs);
   buildLibrary(); pickSong(state.songId,false); setView(state.view==='song'&&curSong()?'song':'home'); bkSummary();
-  const skipped=valid.length-added;
-  toast((added?`Restored ${added} song${added===1?'':'s'}`:'Nothing new to restore')+(skipped?` · ${skipped} already here`:'')+(ok?'':' · storage is blocked, so this won’t be kept'));
-  if(added) closeModal('backupModal');
+  const skipped=valid.length-added-updated;
+  const bits=[];
+  if(added) bits.push(`Restored ${added} song${added===1?'':'s'}`);
+  if(updated) bits.push(`Updated ${updated} song${updated===1?'':'s'}`);
+  if(!bits.length) bits.push('Nothing new to restore');
+  toast(bits.join(' · ')+(skipped?` · ${skipped} already here`:'')+(ok?'':' · storage is blocked, so this won’t be kept'));
+  if(added||updated) closeModal('backupModal');
 }
 $('bkFile').addEventListener('change',e=>{
   const f=e.target.files&&e.target.files[0]; if(!f) return;
