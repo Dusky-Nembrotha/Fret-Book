@@ -284,8 +284,10 @@ def main():
 
 
 # ---------------------------------------------------------------- sections
+# A bridge is normally sung, so it is not in here. Intro is, because a score's
+# "Intro" marker is the instrumental opening even when a vocal cue follows it.
 INSTRUMENTAL = re.compile(
-    r'intro|interlude|outro|solo|instrumental|canon|bridge|riff|break',
+    r'intro|interlude|outro|solo|instrumental|canon|riff|break',
     re.I)
 CHORUS = re.compile(r'chorus', re.I)
 
@@ -337,9 +339,68 @@ def by_sections(song, gp2fb, raw, note=''):
     vocal = [m for m in marks if not INSTRUMENTAL.search(m[1])]
     stanzas = [t for t in raw.replace('\r', '').split('\n\n') if t.strip()]
 
+    # Which stanzas are the chorus? Either they say so, or they are the ones
+    # that come round again.
+    bodies = [re.sub(r'\s+', ' ', t.strip().lower()) for t in stanzas]
+    repeated = {b for b in bodies if bodies.count(b) > 1}
+    is_chorus = []
+    for t, b in zip(stanzas, bodies):
+        head = t.strip().split('\n')[0]
+        m = MARKER.match(head) or BARE.match(head)
+        is_chorus.append(bool(m and CHORUS.search(head)) or b in repeated)
+
+    chorus_slots = [i for i, m in enumerate(vocal) if CHORUS.search(m[1])]
+    chorus_stanzas = [i for i, c in enumerate(is_chorus) if c]
+
+    def norm(t):
+        return re.sub(r'[^a-z0-9 ]', '', t.lower()).strip()
+
+    # Transcribers often name a marker after the line sung there. Where that
+    # matches a stanza's opening line, it is the strongest anchor available.
+    anchors = []
+    used_v = set()
+    for si, stanza in enumerate(stanzas):
+        first = norm(stanza.strip().split('\n')[0])
+        if len(first) < 8:
+            continue
+        for vi, (_, name) in enumerate(vocal):
+            if vi in used_v:
+                continue
+            n = norm(name)
+            if len(n) >= 8 and (first.startswith(n) or n.startswith(first)):
+                anchors.append((si, vi))
+                used_v.add(vi)
+                break
+
+    if chorus_slots and len(chorus_slots) == len(chorus_stanzas):
+        for si, vi in zip(chorus_stanzas, chorus_slots):
+            if si not in dict(anchors) and vi not in used_v:
+                anchors.append((si, vi))
+                used_v.add(vi)
+
+    # keep only anchors that run in order, then fill the runs between them
+    anchors.sort()
+    kept, last = [], (-1, -1)
+    for si, vi in anchors:
+        if si > last[0] and vi > last[1]:
+            kept.append((si, vi))
+            last = (si, vi)
+    anchors = kept
+
+    assigned = dict(anchors)
+    bounds = list(zip([(-1, -1)] + anchors, anchors + [(len(stanzas), len(vocal))]))
+    for (s0, v0), (s1, v1) in bounds:
+        free = [v for v in range(v0 + 1, v1) if v not in assigned.values()]
+        n = 0
+        for si in range(s0 + 1, s1):
+            if si in assigned:
+                continue
+            if n < len(free):
+                assigned[si] = free[n]
+                n += 1
+
     out = [note, ''] if note else []
-    at = 0
-    for stanza in stanzas:
+    for si, stanza in enumerate(stanzas):
         lines = [l.strip() for l in stanza.split('\n') if l.strip()]
         label = None
         m0 = MARKER.match(lines[0]) or BARE.match(lines[0]) if lines else None
@@ -349,14 +410,9 @@ def by_sections(song, gp2fb, raw, note=''):
             lines = lines[1:]
         if not lines:
             continue
-        want_chorus = bool(label and CHORUS.search(label))
-        slot = None
-        for k in range(at, len(vocal)):
-            if bool(CHORUS.search(vocal[k][1])) == want_chorus:
-                slot = vocal[k]
-                at = k + 1
-                break
-        if slot:
+        vi = assigned.get(si)
+        if vi is not None:
+            slot = vocal[vi]
             out.append('')
             out.append('## ' + (label or slot[1]).rstrip('. '))
             out.extend(chord_rows(slot[0]))
