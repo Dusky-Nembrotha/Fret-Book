@@ -18,7 +18,10 @@ import re
 import sys
 
 BAD = '�'
+# "Lee:" - a speaker label on its own line
 SPEAKER = re.compile(r'^\s*([A-Z][A-Za-z.\' ]{1,28}):\s*$')
+# "[Chorus:]", "(Verse 2)", "[Bridge]" - a section marker on its own line
+MARKER = re.compile(r'^\s*[\[(]\s*([A-Za-z][A-Za-z0-9 \'-]{0,28}?)\s*:?\s*[\])]\s*$')
 
 
 def repair(text):
@@ -66,10 +69,10 @@ def format_lyrics(text, heading='Lyrics'):
         if not line.strip():
             blank = True
             continue
-        speaker = SPEAKER.match(line)
-        if speaker:
+        label = SPEAKER.match(line) or MARKER.match(line)
+        if label:
             lines.append('')
-            lines.append('## ' + speaker.group(1).strip())
+            lines.append('## ' + label.group(1).strip())
             blank = False
             continue
         if blank and lines:
