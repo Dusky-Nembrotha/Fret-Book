@@ -17,6 +17,8 @@ Needs pyguitarpro:  pip install pyguitarpro
 """
 import argparse
 import json
+import os
+import re
 import sys
 import time
 
@@ -141,12 +143,24 @@ def convert(path, every, collapse=True):
     return song, tracks, nbars, '\n'.join(lines)
 
 
+def title_from(song, path):
+    """Best available song title: the score's own, else the file name."""
+    for candidate in (song.title, song.subtitle):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    stem = os.path.basename(path).rsplit('.', 1)[0]
+    # strip the bracketed Chinese tags these files often carry
+    return re.sub(r'[\[【(（][^\])】）]*[\]】)）]', '', stem).strip() or stem
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('score', help='a .gp3, .gp4 or .gp5 file')
-    ap.add_argument('--song', required=True)
+    ap.add_argument('scores', nargs='+', help='one or more .gp3/.gp4/.gp5 files')
+    ap.add_argument('--song', default='',
+                    help='song title; only valid with a single score. '
+                         'Otherwise each title comes from the score itself.')
     ap.add_argument('--artist', default='')
     ap.add_argument('--source', default='Guitar Pro score')
     ap.add_argument('--url', default='')
@@ -157,38 +171,57 @@ def main():
     ap.add_argument('-o', '--out', default='fretbook-import.json')
     a = ap.parse_args()
 
-    song, tracks, nbars, sheet = convert(a.score, a.every, not a.keep_repeats)
-    if not sheet.strip():
-        sys.exit('No playable notes found on any guitar track.')
+    if a.song and len(a.scores) > 1:
+        sys.exit('--song only makes sense with one score. '
+                 'With several, the title is read from each file.')
 
-    entry = {
-        'id': 'gp' + str(int(time.time() * 1000)),
-        'song': a.song,
-        'artist': a.artist,
-        'label': 'From score',
-        'source': a.source,
-        'url': a.url,
-        'sheet': sheet,
-        'key': '',
-        'capo': 0,
-        'meta': {},
-    }
+    entries, failures = [], []
+    for n, path in enumerate(a.scores):
+        try:
+            song, tracks, nbars, sheet = convert(path, a.every,
+                                                 not a.keep_repeats)
+        except Exception as exc:
+            failures.append('%s: %s' % (os.path.basename(path), exc))
+            continue
+        if not sheet.strip():
+            failures.append('%s: no playable notes on any guitar track'
+                            % os.path.basename(path))
+            continue
+        title = a.song or title_from(song, path)
+        entries.append({
+            'id': 'gp%d%03d' % (int(time.time() * 1000), n),
+            'song': title,
+            'artist': a.artist or (song.artist or '').strip(),
+            'label': 'From score',
+            'source': a.source,
+            'url': a.url,
+            'sheet': sheet,
+            'key': '',
+            'capo': 0,
+            'meta': {},
+        })
+        print('%-44s %3d bars, %3d chords, tracks: %s'
+              % (title, nbars, sheet.count('['),
+                 ', '.join(t.name for t in tracks)))
+
+    for f in failures:
+        print('SKIPPED  ' + f, file=sys.stderr)
+    if not entries:
+        sys.exit('Nothing converted.')
+
     payload = {
         'app': 'fretbook',
         'version': 1,
         'exported': time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'imports': [entry],
+        'imports': entries,
         'prefs': {},
         'settings': {},
     }
     with open(a.out, 'w', encoding='utf-8') as f:
         json.dump(payload, f, indent=1)
-
-    print('Score:   %s' % (song.title or a.song))
-    print('Tracks:  %s' % ', '.join(t.name for t in tracks))
-    print('Bars:    %d' % nbars)
-    print('Chords:  %d named' % sheet.count('['))
-    print('Wrote    %s' % a.out)
+    print('\n%d song%s written to %s'
+          % (len(entries), '' if len(entries) == 1 else 's', a.out))
+    print('In Fretbook: Backup & restore, then Restore, and pick that file.')
 
 
 if __name__ == '__main__':

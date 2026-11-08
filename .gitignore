@@ -1,3 +1,8 @@
 # Scratch pages used to drive the app in a headless browser while testing.
 _probe.html
+
+# Converter output and the scores fed into it.
 fretbook-import.json
+songs.json
+scores/*
+!scores/README.md
