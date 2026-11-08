@@ -21,7 +21,9 @@ BAD = '�'
 # "Lee:" - a speaker label on its own line
 SPEAKER = re.compile(r'^\s*([A-Z][A-Za-z.\' ]{1,28}):\s*$')
 # "[Chorus:]", "(Verse 2)", "[Bridge]" - a section marker on its own line
-MARKER = re.compile(r'^\s*[\[(]\s*([A-Za-z][A-Za-z0-9 \'-]{0,28}?)\s*:?\s*[\])]\s*$')
+MARKER = re.compile(r"^\s*[\[(]\s*((?:intro|verse|chorus|pre[- ]?chorus|bridge|outro|interlude|solo|refrain|instrumental|coda|tag|hook|break)[A-Za-z0-9 '-]{0,18}?)\s*:?\s*[\])]\s*$", re.I)
+# "Chorus", or 'Intro "Brother Against Brother"' - a bare section word
+BARE = re.compile(r'^\s*(intro|verse|chorus|pre[- ]?chorus|bridge|outro|interlude|solo|refrain|instrumental|coda|tag|hook|break)\b[^a-zA-Z]{0,3}([A-Za-z0-9\u2018\u2019\u201c\u201d\' .-]{0,40})\s*$', re.I)
 
 
 def repair(text):
@@ -69,7 +71,7 @@ def format_lyrics(text, heading='Lyrics'):
         if not line.strip():
             blank = True
             continue
-        label = SPEAKER.match(line) or MARKER.match(line)
+        label = SPEAKER.match(line) or MARKER.match(line) or BARE.match(line)
         if label:
             lines.append('')
             lines.append('## ' + label.group(1).strip())
